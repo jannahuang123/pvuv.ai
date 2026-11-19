@@ -1,9 +1,10 @@
 /**
  * Tool definitions + the shared API client for the MCP server and the CLI.
  *
- * Both surfaces expose the same read-only endpoints, so the schemas, the
+ * Both surfaces expose the same endpoints, so the schemas, the
  * period/dimension vocabularies and the result formatting live here once. The
- * CLI imports `api()` and the same constants rather than restating them.
+ * CLI imports `api()` (GET only) and the same constants rather than restating
+ * them. `create_site` is the only write, and it refuses to duplicate a domain.
  */
 
 export const PROTOCOL_VERSION = '2024-11-05';
@@ -27,9 +28,9 @@ export function requireConfig() {
   if (!process.env.PVUV_TOKEN) throw new Error('PVUV_TOKEN is not set (create one in the console → API tokens)');
 }
 
-/** GET a v1 endpoint and return parsed JSON. Errors carry the server's message
+/** Call a v1 endpoint and return parsed JSON. Errors carry the server's message
  *  so a wrong token or site id explains itself instead of surfacing as a 401. */
-export async function api(path, params = {}) {
+async function request(method, path, params = {}, payload) {
   requireConfig();
   const base = process.env.PVUV_API_URL.replace(/\/+$/, '');
   const url = new URL(base + path);
@@ -37,7 +38,13 @@ export async function api(path, params = {}) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
   const res = await fetch(url, {
-    headers: { authorization: `Bearer ${process.env.PVUV_TOKEN}`, accept: 'application/json' },
+    method,
+    headers: {
+      authorization: `Bearer ${process.env.PVUV_TOKEN}`,
+      accept: 'application/json',
+      ...(payload ? { 'content-type': 'application/json' } : {}),
+    },
+    body: payload ? JSON.stringify(payload) : undefined,
   });
   const body = await res.text();
   let data;
@@ -47,6 +54,11 @@ export async function api(path, params = {}) {
     throw new Error(`${res.status} ${msg}`);
   }
   return data;
+}
+
+/** GET a v1 endpoint. The CLI depends on this staying read-only. */
+export async function api(path, params = {}) {
+  return request('GET', path, params);
 }
 
 const siteArg = { site_id: { type: 'string', description: 'Site id from list_sites' } };
@@ -59,6 +71,25 @@ export const TOOLS = [
     name: 'list_sites',
     description: 'List the sites this token can read, with their ids, domains and timezone. Call this first — every other tool needs a site_id.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'create_site',
+    description: 'Register a website and return the tracking snippet to paste before </head>. If that domain is already registered, returns the existing site and snippet instead of creating a duplicate. Does not edit the website itself.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Display name, required only when the domain is new' },
+        domain: { type: 'string', description: 'Site domain, e.g. example.com' },
+        timezone: { type: 'string', description: 'IANA timezone, fixed at creation. Use Asia/Shanghai for China sites.' },
+        adguard_mode: { type: 'string', enum: ['off', 'loose', 'balanced', 'strict'], description: 'Default off' },
+      },
+      required: ['domain'],
+    },
+  },
+  {
+    name: 'get_embed',
+    description: 'Return the tracking snippet for a site that already exists.',
+    inputSchema: { type: 'object', properties: { ...siteArg }, required: ['site_id'] },
   },
   {
     name: 'get_overview',
@@ -107,6 +138,16 @@ export const TOOLS = [
     inputSchema: { type: 'object', properties: { ...siteArg, ...periodArg }, required: ['site_id'] },
   },
   {
+    name: 'get_vitals',
+    description: 'Web Vitals (LCP, CLS, INP, FCP, TTFB) from non-bot traffic, plus the slowest pages.',
+    inputSchema: { type: 'object', properties: { ...siteArg, ...periodArg }, required: ['site_id'] },
+  },
+  {
+    name: 'get_anomalies',
+    description: 'Recent baseline anomalies: a dimension that jumped or dropped versus its own history.',
+    inputSchema: { type: 'object', properties: { ...siteArg }, required: ['site_id'] },
+  },
+  {
     name: 'get_ad_protection',
     description: 'Ad-protection impact estimate: for each tier (loose/balanced/strict) the pageviews it would block, the block rate and an estimated false-positive rate, plus the top block reasons and blocked sources.',
     inputSchema: { type: 'object', properties: { ...siteArg, ...periodArg }, required: ['site_id'] },
@@ -141,6 +182,12 @@ export async function callTool(name, a) {
       return d.sites.map((s) =>
         `${s.site_id}  ${s.name}  [${(s.domains || []).join(', ')}]  tz=${s.timezone}`).join('\n');
     }
+    case 'create_site':
+      return fmt(await request('POST', '/v1/sites', {}, {
+        name: a.name, domain: a.domain, timezone: a.timezone, adguard_mode: a.adguard_mode,
+      }));
+    case 'get_embed':
+      return fmt(await api(`/v1/sites/${sid(a)}/embed`));
     case 'get_overview':
       return fmt(await api(`/v1/sites/${sid(a)}/overview`, { period: P(a) }));
     case 'get_realtime':
@@ -157,6 +204,10 @@ export async function callTool(name, a) {
       return fmt(await api(`/v1/sites/${sid(a)}/quality`, { period: P(a) }));
     case 'get_alerts':
       return fmt(await api(`/v1/sites/${sid(a)}/alerts`, { period: P(a) }));
+    case 'get_vitals':
+      return fmt(await api(`/v1/sites/${sid(a)}/vitals`, { period: P(a) }));
+    case 'get_anomalies':
+      return fmt(await api(`/v1/sites/${sid(a)}/anomalies`));
     case 'get_ad_protection':
       return fmt(await api(`/v1/sites/${sid(a)}/adguard`, { period: P(a) }));
     case 'get_edge_requests':

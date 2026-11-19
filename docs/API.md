@@ -1,7 +1,9 @@
 # API, MCP server & CLI
 
-Three ways to read a pvuv.ai deployment programmatically. All are **read-only**
-(`GET` only) and share one credential: a personal API token.
+Three ways to use a pvuv.ai deployment programmatically. They share one
+credential: a personal API token. Reads are `GET`. The one write is
+`POST /v1/sites` (`create_site`): it registers a domain, or returns the site
+that already owns that domain instead of creating a duplicate.
 
 - **REST API** — for dashboards, scripts, spreadsheets, anything that speaks HTTP
 - **MCP server** — so your own chatbot can answer questions about your traffic
@@ -52,6 +54,8 @@ that is signed in to the console can call it directly for that owner's sites.
 | Endpoint | Returns | Parameters |
 |---|---|---|
 | `GET /v1/sites` | sites this token can read (`site_id`, `name`, `domains`, `timezone`, `created_at`) — **call first**, ids are not guessable | — |
+| `POST /v1/sites` | register `{name, domain, timezone?, adguard_mode?}`. A domain already owned by this token returns that site with `created: false` and the snippet. A token limited to one site cannot create. | JSON body |
+| `GET /v1/sites/{id}/embed` | the tracking snippet for an existing site (`snippet`, `script_src`, `ingest_url`) | — |
 | `GET /v1/sites/summary` | per-site totals for every site in scope, in one pass (`uv_approx: true` when visitors are summed per day) | `period` |
 | `GET /v1/sites/{id}/overview` | pageviews, visitors, sessions, both bounce rates, dwell, visit duration, verdict split, conversions, revenue | `period` `filters` |
 | `GET /v1/sites/{id}/realtime` | `{window_minutes, online, pageviews, minutes[]}` for the last 30 min; bot/crawler traffic excluded; always live (ignores `period`) | — |
@@ -106,7 +110,7 @@ that is signed in to the console can call it directly for that owner's sites.
 Errors are `{"error":"…"}` with a matching status: `400` invalid parameter
 (unknown metric/interval/dim, bad funnel, range too large for the interval),
 `401` bad/missing token, `403` token or session not valid for that site, `404`
-unknown route, site or funnel, `405` any method other than `GET`.
+unknown route, site or funnel, `405` a method this route does not allow (`POST` is only `/v1/sites` and `/mcp`).
 
 `edge` depends on an optional Cloudflare API token the deployer configures in
 the console; without it the endpoint answers `{"available": false}` with zeroed
@@ -142,9 +146,19 @@ Add to your client's MCP config (Claude Desktop shown):
 }
 ```
 
-Tools: `list_sites`, `get_overview`, `get_realtime`, `get_timeseries`,
-`get_breakdown`, `get_traffic_quality`, `get_alerts`, `get_ad_protection`,
-`get_edge_requests`, `get_suspicious_visitors`.
+The same tools are also served over HTTP at `POST /mcp` on the api worker
+(stateless JSON-RPC). Point a client at `https://<api-host>/mcp` and send the
+personal token as `Authorization: Bearer pvuv_…`. No local checkout required.
+
+Tools: `list_sites`, `create_site`, `get_embed`, `get_overview`, `get_realtime`,
+`get_timeseries`, `get_breakdown`, `get_traffic_quality`, `get_alerts`,
+`get_vitals`, `get_anomalies`, `get_ad_protection`, `get_edge_requests`,
+`get_suspicious_visitors`.
+
+`create_site` takes `domain` plus optional `name`, `timezone` and
+`adguard_mode`. It returns `snippet`, the HTML to paste before `</head>`. It
+does not edit the website. Calling it again for the same domain returns the
+existing site.
 
 They map onto `/v1/sites`, `overview`, `realtime`, `timeseries`, `breakdown`,
 `quality`, `alerts`, `adguard`, `edge` and `traffic`. Notes:
@@ -153,12 +167,12 @@ They map onto `/v1/sites`, `overview`, `realtime`, `timeseries`, `breakdown`,
   the named list (`24h` … `this_year`, with `7d` `30d` `90d` as rolling windows).
 - `get_breakdown` takes the dimension as `dimension`, not `dim`.
 - `get_suspicious_visitors` sends `min_score` 30 unless told otherwise.
-- There is no tool yet for `sites/summary`, `vitals`, `ctit`, `anomalies`,
-  `funnels`, `funnel`, `funnel_dropoff` or `visitors`; use the REST API for
-  those.
+- There is no tool yet for `sites/summary`, `ctit`, `funnels`, `funnel`,
+  `funnel_dropoff` or `visitors`; use the REST API for those.
 
-The server only issues GETs, so a chatbot can never change your configuration,
-delete data, or alter ad protection — the worst it can do is read.
+Other than `create_site`, the server only reads, so a chatbot cannot delete
+data or change ad protection. `create_site` cannot create a second site for a
+domain you already registered.
 
 ---
 

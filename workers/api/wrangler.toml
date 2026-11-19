@@ -6,6 +6,13 @@
 # Secrets:
 #   wrangler secret put HMAC_KEY  -c workers/api/wrangler.toml   (session auth)
 #   wrangler secret put API_TOKEN -c workers/api/wrangler.toml   (external systems)
+#
+# POST /v1/sites and POST /mcp (create_site) also need, when you want the
+# returned snippet to point at this deployment:
+#   [[kv_namespaces]] binding = "SITE_CONFIG"  id = "PLACEHOLDER_KV_SITE_CONFIG_ID"
+#   [vars]
+#   INGEST_HOST = "in.example.com"          # hostname only, no scheme
+#   SCRIPT_HOST = "analytics.example.com"   # hostname that serves /f.js
 
 name = "pvuv-api"
 main = "src/index.ts"
