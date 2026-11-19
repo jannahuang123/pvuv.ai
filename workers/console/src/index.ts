@@ -38,6 +38,7 @@ import { runRetentionPurge, storageReport } from '../../cron/src/retention';
 import { CONFIG } from '../../../shared/config.gen';
 import { LlmError } from './llm';
 import { generateReport, type ReportLang } from './report';
+import { marketAdvice } from './stringer';
 import { EMBEDDED_ASSETS } from './embedded-assets';
 
 /** KV key the ingest worker reads the compiled directory from (§6.6). */
@@ -58,6 +59,8 @@ export interface Env {
   /** Optional fallback LLM key for AI reports (§13). The deployer normally sets
    *  the key in console settings instead (stored in D1, edited via the UI). */
   AI_API_KEY?: string;
+  /** 什么值得做 MCP URL. The path is the credential, so it stays a secret. */
+  STRINGER_MCP_URL?: string;
   /** Plain vars (workers/console/wrangler.toml [vars]) */
   ADMIN_EMAILS: string;
   /** hostname of the ingest worker, for the embed snippet (see wrangler.toml) */
@@ -766,6 +769,41 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     return json({ content: result.content, period: periodLabel, created_at: now });
   }
 
+  // Market advice from 什么值得做. Stored beside AI reports, kind = 'market',
+  // so it does not replace the traffic report.
+  const marketMatch = path.match(/^\/api\/sites\/([A-Za-z0-9]{4,16})\/market$/);
+  if (marketMatch) {
+    const siteId = marketMatch[1];
+    const site = await env.DB.prepare('SELECT owner_id, name, allowed_domains FROM sites WHERE site_id = ?')
+      .bind(siteId).first<{ owner_id: string; name: string; allowed_domains: string }>();
+    if (!site || site.owner_id !== user) throw new ApiError(403, 'not your site');
+    if (request.method === 'GET') {
+      const row = await env.DB.prepare(
+        `SELECT content, data_snapshot, created_at FROM ai_reports WHERE site_id = ? AND kind = 'market' ORDER BY created_at DESC LIMIT 1`,
+      ).bind(siteId).first<{ content: string; data_snapshot: string; created_at: number }>();
+      return json({ advice: row ?? null, configured: !!env.STRINGER_MCP_URL });
+    }
+    if (request.method === 'POST') {
+      if (!env.STRINGER_MCP_URL) return json({ error: '市场建议还没有接上' }, 400);
+      let domains: string[] = [];
+      try { domains = JSON.parse(site.allowed_domains) as string[]; } catch { domains = []; }
+      let hint = '';
+      try { hint = String(((await request.json()) as { q?: string }).q ?? ''); } catch { hint = ''; }
+      let result: { content: string; query: string };
+      try {
+        result = await marketAdvice(env.STRINGER_MCP_URL, site.name, domains, hint);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'market advice failed';
+        return json({ error: message }, 502);
+      }
+      const now = Date.now();
+      await env.DB.prepare(
+        'INSERT INTO ai_reports (site_id, period, kind, content, data_snapshot, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).bind(siteId, result.query, 'market', result.content, result.query, now).run();
+      return json({ content: result.content, query: result.query, created_at: now });
+    }
+  }
+
   // ── saved funnels (migration 0019). A funnel is a property of the site, not
   // of one browser: several per site, shared by every admin, and readable by
   // the API/MCP and the AI report.
@@ -855,7 +893,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     if (resource === 'ai_report') {
       const ai = await aiSettings(env.DB);
       const row = await env.DB.prepare(
-        'SELECT period, content, created_at FROM ai_reports WHERE site_id = ? ORDER BY created_at DESC LIMIT 1',
+        `SELECT period, content, created_at FROM ai_reports WHERE site_id = ? AND COALESCE(kind, 'summary') = 'summary' ORDER BY created_at DESC LIMIT 1`,
       ).bind(siteId).first<{ period: string; content: string; created_at: number }>();
       return json({
         report: row ?? null,

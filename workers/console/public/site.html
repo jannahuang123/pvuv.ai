@@ -305,6 +305,18 @@
 
   </section>
 
+  <section class="sec" data-sec="market" hidden>
+  <div class="chart-head">
+    <h2 data-i18n="Advice">Advice</h2>
+    <div class="chart-ctrls">
+      <input id="marketQ" maxlength="40" placeholder="category, e.g. ai video" data-i18n-ph="category, e.g. ai video" aria-label="Category">
+      <button id="marketGen" class="btn primary" data-i18n="Update advice">Update advice</button>
+    </div>
+  </div>
+  <p class="sec-desc" data-i18n="market-help">What similar products that are already growing did to get users, and the move you can copy this week. Each line comes from a researched case.</p>
+  <div class="panel" id="marketAdvice"></div>
+  </section>
+
   <section class="sec" data-sec="ai" hidden>
   <div class="chart-head">
     <h2 data-i18n="AI report">AI report</h2>
@@ -1165,6 +1177,49 @@ async function loadAiReport() {
     renderReport(d.report);
   } catch { /* non-fatal */ }
 }
+function linkify(html) {
+  return html.replace(/https:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+}
+function renderMarket(advice) {
+  const el = document.getElementById('marketAdvice');
+  if (!advice || !advice.content) {
+    el.innerHTML = `<p class="muted">${te('No advice yet — click Update advice.')}</p>`;
+    return;
+  }
+  const when = advice.created_at ? new Date(advice.created_at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
+  el.innerHTML = `<div class="ai-md">${linkify(mdToHtml(advice.content))}</div>`
+    + `<p class="muted" style="margin:12px 0 0;font-size:12px">${when}</p>`;
+}
+async function loadMarket() {
+  const btn = document.getElementById('marketGen');
+  try {
+    const d = await (await guard(await fetch(`/api/sites/${site}/market`))).json();
+    if (!d.configured) {
+      btn.disabled = true;
+      document.getElementById('marketAdvice').innerHTML = `<p class="muted">${te('Market advice is not connected.')}</p>`;
+      return;
+    }
+    btn.disabled = false;
+    renderMarket(d.advice);
+  } catch { /* non-fatal */ }
+}
+document.getElementById('marketGen').addEventListener('click', async () => {
+  const btn = document.getElementById('marketGen');
+  const el = document.getElementById('marketAdvice');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = t('Generating…');
+  el.innerHTML = `<p class="muted">${te('Looking up products that are growing…')}</p>`;
+  try {
+    const q = document.getElementById('marketQ').value.trim();
+    const r = await guard(await fetch(`/api/sites/${site}/market`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ q }),
+    }));
+    const d = await r.json();
+    if (!r.ok) el.innerHTML = `<p class="err" style="color:#f87171">${esc(d.error || t('generation failed'))}</p>`;
+    else renderMarket({ content: d.content, created_at: d.created_at });
+  } catch { el.innerHTML = `<p class="err" style="color:#f87171">${te('generation failed')}</p>`; }
+  finally { btn.disabled = false; btn.textContent = label; }
+});
 document.getElementById('aiGen').addEventListener('click', async () => {
   const btn = document.getElementById('aiGen'), el = document.getElementById('aiReport');
   const label = btn.textContent;
@@ -1336,8 +1391,9 @@ const SECTION_LOADERS = {
     renderTraffic(tr.rows || [], TRAFFIC_FOLD);
   },
   ai:         () => loadAiReport(),
+  market:     () => loadMarket(),
 };
-const SECTION_ORDER = ['overview', 'sources', 'audience', 'campaigns', 'funnel', 'goals', 'vitals', 'quality', 'adguard', 'suspicious', 'ai'];
+const SECTION_ORDER = ['overview', 'sources', 'audience', 'campaigns', 'funnel', 'goals', 'vitals', 'quality', 'adguard', 'suspicious', 'market', 'ai'];
 
 let activeSec = 'overview';
 // bumped whenever the period or the filters change, so every section reloads
@@ -1989,7 +2045,7 @@ renderFunnelSteps();
 // ── section nav: one pill per visible section; the active pill follows the
 // scroll position. Hidden sections (no goals / no vitals yet) are skipped, so
 // the nav always reflects what the page actually shows.
-const SEC_LABEL = { overview: 'Overview', trend: 'Trend', sources: 'Sources', audience: 'Audience', vitals: 'Web Vitals', campaigns: 'Campaigns', goals: 'Goals', funnel: 'Funnel', quality: 'Traffic quality', adguard: 'Ad protection', suspicious: 'Suspicious', ai: 'AI report' };
+const SEC_LABEL = { overview: 'Overview', trend: 'Trend', sources: 'Sources', audience: 'Audience', vitals: 'Web Vitals', campaigns: 'Campaigns', goals: 'Goals', funnel: 'Funnel', quality: 'Traffic quality', adguard: 'Ad protection', suspicious: 'Suspicious', market: 'Advice', ai: 'AI report' };
 // The nav is a TAB BAR now, not a scroll-spy: every entry is always listed
 // (a stable set is easier to navigate than one that grows as data loads), and
 // clicking one swaps the visible section and loads it if it has not been

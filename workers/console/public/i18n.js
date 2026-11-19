@@ -27,6 +27,13 @@
   var DICT = {
     zh: {
       'API tokens': 'API 令牌',
+      'Advice': '建议',
+      'Update advice': '更新建议',
+      'market-help': '对照最近在涨的同类产品，写出这周能做的动作。每一条都来自已经调查过的案例。',
+      'No advice yet — click Update advice.': '还没有建议，点「更新建议」。',
+      'Market advice is not connected.': '市场建议还没有接上。',
+      'Looking up products that are growing…': '正在查最近在涨的同类产品…',
+      'category, e.g. ai video': '品类词，例如 ai video',
       'Order alerts': '订单通知',
       'notify-help': ' — 有人下单或下单失败时，把来源、看过的页面和离开页发到这里。填写 Slack 或飞书机器人的 Webhook。网站付款成功时调用 pvuv(\'identify\', 用户ID) 和 pvuv(\'event\', \'order\', { revenue: 29 })；失败时调用 pvuv(\'event\', \'order_failed\', { reason: \'原因\' })。',
       'Webhook URL': '通知地址',
