@@ -25,6 +25,7 @@ import { parseBotDirectory } from '../../../shared/botdir';
 import { createToken } from '../../../shared/tokens';
 import { verifySession, SESSION_COOKIE } from '../../api/src/auth';
 import { generateSiteId, hmacSign, serializeCookie } from '../../../shared/ids';
+import { NOTIFY_WEBHOOK_KEY, normalizeWebhook } from '../../../shared/journey';
 import { runDiagnostics, probeEvent } from './diagnostics';
 import {
   isProvider, configuredProviders, oauthStart, oauthCallback,
@@ -404,6 +405,43 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
     `).bind(k, v, now)));
     return json({ ok: true });
+  }
+
+  // Order/failure messages. The webhook is never echoed back in full.
+  if (path === '/api/settings/notify') {
+    if (request.method === 'GET') {
+      const row = await env.DB.prepare('SELECT value FROM instance_settings WHERE key = ?')
+        .bind(NOTIFY_WEBHOOK_KEY).first<{ value: string }>();
+      let host: string | null = null;
+      if (row?.value) { try { host = new URL(row.value).host; } catch { host = null; } }
+      return json({ set: !!row?.value, host });
+    }
+    if (request.method === 'DELETE') {
+      await env.DB.prepare('DELETE FROM instance_settings WHERE key = ?').bind(NOTIFY_WEBHOOK_KEY).run();
+      return json({ ok: true });
+    }
+    if (request.method === 'POST') {
+      let body: { url?: string };
+      try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
+      const url = normalizeWebhook(body.url ?? '');
+      if (!url) return json({ error: '需要一个 https 的 Slack 或飞书机器人地址' }, 400);
+      await env.DB.prepare(`
+        INSERT INTO instance_settings (key, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).bind(NOTIFY_WEBHOOK_KEY, url, Date.now()).run();
+      return json({ ok: true, host: new URL(url).host });
+    }
+  }
+
+  if (request.method === 'GET' && path === '/api/journeys') {
+    const rows = await env.DB.prepare(`
+      SELECT n.notice_id, n.site_id, s.name AS site_name, n.kind, n.user_id, n.visitor_id,
+             n.message, n.created_at, n.notified_at
+      FROM journey_notices n JOIN sites s ON s.site_id = n.site_id
+      WHERE s.owner_id = ? AND s.name != '__pvuv_selftest'
+      ORDER BY n.created_at DESC LIMIT 20
+    `).bind(user).all();
+    return json({ notices: rows.results });
   }
 
   // AI analysis reports (§13): provider/base-url/model/language + API key. The

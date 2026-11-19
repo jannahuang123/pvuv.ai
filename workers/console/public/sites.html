@@ -183,6 +183,16 @@
       <div class="full" id="tokList" style="font-size:12px;color:#8b93a1"></div>
       <button type="submit" data-i18n="Create token">Create token</button>
     </form>
+    <form class="create" id="notifySettings" style="margin-top:16px;border-top:1px solid #262b36;padding-top:16px">
+      <div class="full" style="margin-bottom:4px"><strong style="font-size:13px;color:#c7cdd8" data-i18n="Order alerts">Order alerts</strong>
+        <span style="font-size:12px;color:#8b93a1" data-i18n="notify-help"> — when someone orders or a checkout fails, the source, page path and exit page are sent here. Use a Slack or Feishu/Lark bot webhook. On the site, after a successful payment call pvuv('identify', userId) and pvuv('event', 'order', { revenue: 29 }); on failure call pvuv('event', 'order_failed', { reason: 'card declined' }).</span></div>
+      <div class="full"><label><span data-i18n="Webhook URL">Webhook URL</span> <span id="notifyState" style="color:#8b93a1"></span>
+        <input id="notifyUrl" type="password" maxlength="500" autocomplete="off" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…"></label></div>
+      <p class="err" id="notifyMsg"></p>
+      <div class="full" id="notifyFeed" style="font-size:12px;color:#c7cdd8;white-space:pre-wrap"></div>
+      <div class="actions"><button type="submit" data-i18n="Save webhook">Save webhook</button>
+      <button type="button" id="notifyClear" class="danger" data-i18n="Remove">Remove</button></div>
+    </form>
     <form class="create" id="botdirSettings" style="margin-top:16px;border-top:1px solid #262b36;padding-top:16px">
       <div class="full" style="margin-bottom:4px"><strong style="font-size:13px;color:#c7cdd8" data-i18n="Crawler directory">Crawler directory</strong>
         <span style="font-size:12px;color:#8b93a1" data-i18n="botdir-help"> — optional. Import a public bots-and-agents catalogue to label crawler traffic by kind (search / AI training / SEO / ads). Classification only: it never changes scoring, verdicts or ad protection.</span></div>
@@ -240,7 +250,7 @@ function togglePanel(id) {
   if (!opened.hidden) opened.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 document.getElementById('btnAdd').addEventListener('click', () => togglePanel('addPanel'));
-document.getElementById('btnSettings').addEventListener('click', () => { togglePanel('homePanel'); loadTokens(); loadStorage(); });
+document.getElementById('btnSettings').addEventListener('click', () => { togglePanel('homePanel'); loadTokens(); loadNotify(); loadStorage(); });
 document.querySelectorAll('.panel .close').forEach((b) =>
   b.addEventListener('click', () => { document.getElementById(b.dataset.close).hidden = true; }));
 
@@ -460,6 +470,37 @@ document.getElementById('homeSettings').addEventListener('submit', async (e) => 
 // explicitly, because an import that silently changed verdicts would be a trap.
 // API tokens (§10) — credentials for the CLI / MCP server / integrations.
 // The plaintext exists only in this one response; the server stores an HMAC.
+async function loadNotify() {
+  const state = document.getElementById('notifyState');
+  const feed = document.getElementById('notifyFeed');
+  try {
+    const cfg = await (await guard(await fetch('/api/settings/notify'))).json();
+    state.textContent = cfg.set ? `→ ${cfg.host}` : '';
+  } catch { state.textContent = ''; }
+  try {
+    const d = await (await guard(await fetch('/api/journeys'))).json();
+    const rows = d.notices || [];
+    feed.textContent = rows.length
+      ? rows.map((n) => n.message).join('\n\n')
+      : t('No orders or failures yet.');
+  } catch { feed.textContent = ''; }
+}
+document.getElementById('notifySettings').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById('notifyMsg');
+  const r = await guard(await fetch('/api/settings/notify', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url: document.getElementById('notifyUrl').value }),
+  }));
+  const d = await r.json();
+  msg.textContent = r.ok ? t('saved') : (d.error || t('save failed'));
+  if (r.ok) { document.getElementById('notifyUrl').value = ''; loadNotify(); }
+});
+document.getElementById('notifyClear').addEventListener('click', async () => {
+  await guard(await fetch('/api/settings/notify', { method: 'DELETE' }));
+  document.getElementById('notifyUrl').value = '';
+  loadNotify();
+});
 async function loadTokens() {
   const box = document.getElementById('tokList');
   const sel = document.getElementById('tokSite');

@@ -56,6 +56,7 @@ that is signed in to the console can call it directly for that owner's sites.
 | `GET /v1/sites` | sites this token can read (`site_id`, `name`, `domains`, `timezone`, `created_at`) — **call first**, ids are not guessable | — |
 | `POST /v1/sites` | register `{name, domain, timezone?, adguard_mode?}`. A domain already owned by this token returns that site with `created: false` and the snippet. A token limited to one site cannot create. | JSON body |
 | `GET /v1/sites/{id}/embed` | the tracking snippet for an existing site (`snippet`, `script_src`, `ingest_url`) | — |
+| `GET /v1/sites/{id}/journeys` | recent order and checkout-failure paths (`message`, source, pages, exit). `kind=order` or `kind=failed` | `kind` `limit` |
 | `GET /v1/sites/summary` | per-site totals for every site in scope, in one pass (`uv_approx: true` when visitors are summed per day) | `period` |
 | `GET /v1/sites/{id}/overview` | pageviews, visitors, sessions, both bounce rates, dwell, visit duration, verdict split, conversions, revenue | `period` `filters` |
 | `GET /v1/sites/{id}/realtime` | `{window_minutes, online, pageviews, minutes[]}` for the last 30 min; bot/crawler traffic excluded; always live (ignores `period`) | — |
@@ -150,7 +151,7 @@ The same tools are also served over HTTP at `POST /mcp` on the api worker
 (stateless JSON-RPC). Point a client at `https://<api-host>/mcp` and send the
 personal token as `Authorization: Bearer pvuv_…`. No local checkout required.
 
-Tools: `list_sites`, `create_site`, `get_embed`, `get_overview`, `get_realtime`,
+Tools: `list_sites`, `create_site`, `get_embed`, `get_journeys`, `get_overview`, `get_realtime`,
 `get_timeseries`, `get_breakdown`, `get_traffic_quality`, `get_alerts`,
 `get_vitals`, `get_anomalies`, `get_ad_protection`, `get_edge_requests`,
 `get_suspicious_visitors`.
