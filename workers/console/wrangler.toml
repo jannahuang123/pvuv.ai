@@ -6,10 +6,11 @@
 # All ids are PLACEHOLDERS — see root wrangler.toml for security notes.
 # Secrets:
 #   wrangler secret put HMAC_KEY             -c workers/console/wrangler.toml  (session cookies)
+#   wrangler secret put ADMIN_PASSWORD       -c workers/console/wrangler.toml  (optional shared password)
 #   wrangler secret put GOOGLE_CLIENT_SECRET -c workers/console/wrangler.toml  (Google login)
 #   wrangler secret put GITHUB_CLIENT_SECRET -c workers/console/wrangler.toml  (GitHub login)
-# Login is OAuth-only (Google / GitHub). Configure at least one provider or
-# nobody can sign in.
+# Login is Google / GitHub OAuth, plus the optional ADMIN_PASSWORD secret.
+# Configure at least one of those or nobody can sign in.
 #
 # NOTE: keep all top-level keys (routes, kv_namespaces, …) ABOVE the first
 # [table] header, or TOML nests them into that table and the binding is lost.

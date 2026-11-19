@@ -14,6 +14,11 @@
   .oauth a:hover { background: var(--surface-2); border-color: var(--border-3); text-decoration: none; }
   .err { color: var(--bad); font-size: 13px; margin-top: 14px; min-height: 1em; }
   .note { color: var(--muted); font-size: 13px; margin-top: 14px; }
+  form.pw { display: grid; gap: 8px; }
+  form.pw input { width: 100%; }
+  form.pw button { width: 100%; min-height: 40px; margin-top: 2px; }
+  .or { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; color: var(--muted); font-size: 12px; }
+  .or::before, .or::after { content: ''; flex: 1; height: 1px; background: var(--border); }
   .langrow { margin-top: 18px; text-align: center; }
   .langrow select { background-color: var(--bg); color: var(--muted); font-size: 12px; min-height: 28px; padding: 3px 26px 3px 8px; }
 </style>
@@ -23,6 +28,11 @@
 <div class="card">
   <h1>pvuv.ai</h1>
   <p class="sub" data-i18n="self-hosted analytics · sign in">self-hosted analytics · sign in</p>
+  <form class="pw" id="pw" hidden>
+    <input type="email" id="email" name="email" autocomplete="username" required data-i18n-ph="Email address">
+    <input type="password" id="password" name="password" autocomplete="current-password" required data-i18n-ph="Password">
+    <button class="btn primary" type="submit" data-i18n="Sign in">Sign in</button>
+  </form>
   <div class="oauth" id="oauth"></div>
   <div class="err" id="err"></div>
   <div class="langrow"><select id="lang" aria-label="Language"></select></div>
@@ -32,6 +42,7 @@ const t = (s) => window.PVI18N.t(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ERR = {
   not_admin: 'That account is not an admin — login not allowed.',
+  invalid_credentials: 'That email or password is not valid.',
   bad_state: 'Login session expired — please try again.',
   bad_request: 'Login was interrupted — please try again.',
   no_email: 'No verified email was returned by the provider.',
@@ -48,13 +59,39 @@ function renderProviders(providers) {
   lastProviders = providers;
   const box = document.getElementById('oauth');
   if (!providers.length) {
-    box.innerHTML = `<p class="note">${esc(t('No login provider is configured. The deployer must set up Google or GitHub OAuth — see DEPLOY.md.'))}</p>`;
+    box.innerHTML = '';
     return;
   }
   box.innerHTML = providers.map((p) => `<a href="/api/auth/${p}/start">${esc(t(LABEL[p]) || p)}</a>`).join('');
 }
 fetch('/api/auth/providers').then((r) => r.json()).then((cfg) => {
-  renderProviders(cfg.providers || []);
+  const providers = cfg.providers || [];
+  const form = document.getElementById('pw');
+  if (cfg.password) form.hidden = false;
+  renderProviders(providers);
+  if (!cfg.password && !providers.length) {
+    document.getElementById('oauth').innerHTML = `<p class="note">${esc(t('No login provider is configured. The deployer must set up Google or GitHub OAuth — see DEPLOY.md.'))}</p>`;
+  }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('err');
+    err.textContent = '';
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('email').value,
+        password: document.getElementById('password').value,
+      }),
+    });
+    if (r.ok) { location.href = '/sites.html'; return; }
+    let code = 'oauth_failed';
+    try { code = (await r.json()).error || code; } catch { /* keep default */ }
+    const msg = code === 'invalid credentials' ? ERR.invalid_credentials
+      : code === 'not an admin' ? ERR.not_admin
+      : (ERR[code] || 'Sign-in failed');
+    err.textContent = t(msg);
+  });
 }).catch(() => {
   document.getElementById('err').textContent = t('Could not reach the server.');
 });

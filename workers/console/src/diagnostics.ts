@@ -26,6 +26,7 @@ interface DiagEnv {
   SITE_CONFIG: KVNamespace;
   HMAC_KEY?: string;
   ADMIN_EMAILS?: string;
+  ADMIN_PASSWORD?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GITHUB_CLIENT_ID?: string;
@@ -98,14 +99,15 @@ export async function runDiagnostics(env: DiagEnv): Promise<Check[]> {
       : { key: `secret:${label}`, label, status: 'fail', detail: 'not set', fix });
   }
 
-  // login providers: at least one OAuth provider must be configured, or nobody
-  // can sign in (there is no password login)
+  // login: OAuth and/or the optional shared password. At least one must be set.
   const googleOk = !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
   const githubOk = !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
-  checks.push(googleOk || githubOk
-    ? { key: 'oauth', label: 'Login provider configured', status: 'ok', detail: `${[googleOk && 'Google', githubOk && 'GitHub'].filter(Boolean).join(' + ')} ready` }
-    : { key: 'oauth', label: 'Login provider configured', status: 'fail', detail: 'no OAuth provider set — nobody can sign in',
-        fix: 'Configure Google and/or GitHub OAuth (client id var + secret). See DEPLOY.md.' });
+  const passwordOk = !!env.ADMIN_PASSWORD;
+  const ready = [googleOk && 'Google', githubOk && 'GitHub', passwordOk && 'password'].filter(Boolean);
+  checks.push(ready.length
+    ? { key: 'oauth', label: 'Login provider configured', status: 'ok', detail: `${ready.join(' + ')} ready` }
+    : { key: 'oauth', label: 'Login provider configured', status: 'fail', detail: 'no login provider set — nobody can sign in',
+        fix: 'Set ADMIN_PASSWORD, or configure Google and/or GitHub OAuth (client id var + secret). See DEPLOY.md.' });
 
   // 4. scoring config loaded and sane
   try {
