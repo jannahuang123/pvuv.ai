@@ -4,7 +4,7 @@
  * Same-origin JSON API for the plain-HTML frontend in public/ (§19: no
  * framework, no <meta name="keywords">), static pages via ASSETS:
  *
- *   POST /api/login            {email, password}
+ *   POST /api/login            {email, password}   (only if ADMIN_PASSWORD is set)
  *   POST /api/logout
  *   GET  /api/me
  *   GET  /api/sites
@@ -12,11 +12,12 @@
  *   GET  /api/sites/:id/(overview|timeseries|breakdown|quality|traffic)
  *   GET  /api/sites/:id/visitors/:vid/profile
  *
- * Auth: OAuth-only (Google / GitHub). Single-tenant — every email in
- * ADMIN_EMAILS (a plain var, comma-separated) shares one 'admin' owner and
- * one site list; non-admin emails are refused. Sessions are HMAC-signed
- * cookies, re-issued (sliding expiry) on any authenticated API hit. Queries
- * reuse the api worker's query layer against the same D1.
+ * Auth: Google / GitHub OAuth, plus an optional shared password
+ * (ADMIN_PASSWORD secret) for the emails in ADMIN_EMAILS. Single-tenant —
+ * every admin email shares one 'admin' owner and one site list; non-admin
+ * emails are refused. Sessions are HMAC-signed cookies, re-issued (sliding
+ * expiry) on any authenticated API hit. Queries reuse the api worker's
+ * query layer against the same D1.
  */
 
 import { parsePeriod, siteTimezone, overview, sitesSummary, realtime, timeseries, breakdown, quality, alerts, anomalies, funnel, funnelDropoff, traffic, visitorsList, visitorProfile, ranking, adguardImpact, edge, vitals, conversionTiming, ApiError, FILTERABLE, type Filter, type FunnelStep } from '../../api/src/queries';
@@ -36,6 +37,7 @@ import { runRetentionPurge, storageReport } from '../../cron/src/retention';
 import { CONFIG } from '../../../shared/config.gen';
 import { LlmError } from './llm';
 import { generateReport, type ReportLang } from './report';
+import { EMBEDDED_ASSETS } from './embedded-assets';
 
 /** KV key the ingest worker reads the compiled directory from (§6.6). */
 const BOTDIR_KV_KEY = 'botdir:v1';
@@ -43,9 +45,13 @@ const BOTDIR_KV_KEY = 'botdir:v1';
 export interface Env {
   DB: D1Database;
   SITE_CONFIG: KVNamespace;
-  ASSETS: Fetcher;
+  /** Present on a normal Wrangler deploy. A direct upload can inline the
+   *  console files instead and leave this unbound. */
+  ASSETS?: Fetcher;
   /** Secrets via `wrangler secret put` — never in any file. */
   HMAC_KEY: string;
+  /** Optional shared password for ADMIN_EMAILS. When unset, login is OAuth-only. */
+  ADMIN_PASSWORD?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GITHUB_CLIENT_SECRET?: string;
   /** Optional fallback LLM key for AI reports (§13). The deployer normally sets
@@ -62,6 +68,12 @@ export interface Env {
 }
 
 const SESSION_TTL_MS = 7 * 86400e3;
+
+/** Static files: the assets binding when Wrangler uploaded them, otherwise the
+ *  inlined copy used by a direct API deploy. */
+function assets(env: Env): Fetcher {
+  return env.ASSETS ?? EMBEDDED_ASSETS;
+}
 const ADMIN_USER_ID = 'admin';
 // The loader is embedded at a fixed, unversioned URL (/f.js), so an in-place
 // upgrade (e.g. a scoring/ad-guard fix) must still reach already-embedded sites.
@@ -96,7 +108,7 @@ export default {
     }
     if (url.pathname === '/' || url.pathname === '/index.html') {
       // no lang → always returns a page (custom home or the default template)
-      return (await homepage(request, env)) ?? env.ASSETS.fetch(request);
+      return (await homepage(request, env)) ?? assets(env).fetch(request);
     }
     // localized landing pages: /<lang> → public/home.<lang>.html (with the same
     // attribution footer). Only a locale-shaped single segment (e.g. /zh,
@@ -118,14 +130,14 @@ export default {
     // policy we control (Workers Static Assets defaults aren't guaranteed), so
     // an in-place f.js upgrade propagates predictably to embedded sites.
     if (url.pathname === '/f.js' && request.method === 'GET') {
-      const asset = await env.ASSETS.fetch(request);
+      const asset = await assets(env).fetch(request);
       if (!asset.ok) return asset;
       const h = new Headers(asset.headers);
       h.set('cache-control', `public, max-age=${SDK_MAX_AGE}, stale-while-revalidate=${SDK_SWR}`);
       h.set('content-type', 'application/javascript; charset=utf-8');
       return new Response(asset.body, { status: asset.status, headers: h });
     }
-    return env.ASSETS.fetch(request);
+    return assets(env).fetch(request);
   },
 } satisfies ExportedHandler<Env>;
 
@@ -155,7 +167,7 @@ async function homepage(request: Request, env: Env, lang?: string): Promise<Resp
   // present locally, and both gitignored so they never enter the public repo.
   // Served verbatim (MIT: no attribution is forced onto a deployer's own page).
   const asset = lang ? `/home.${lang}` : '/home';
-  const custom = await env.ASSETS.fetch(new Request(`${origin}${asset}`));
+  const custom = await assets(env).fetch(new Request(`${origin}${asset}`));
   if (custom.ok) {
     return new Response(custom.body, {
       status: 200,
@@ -167,7 +179,7 @@ async function homepage(request: Request, env: Env, lang?: string): Promise<Resp
   if (lang) return null;
 
   const s = await instanceSettings(env.DB);
-  const def = await env.ASSETS.fetch(new Request(`${origin}/`));
+  const def = await assets(env).fetch(new Request(`${origin}/`));
   const html = (await def.text())
     .replaceAll('{{name}}', escapeHtml(s.site_name))
     .replaceAll('{{description}}', escapeHtml(s.site_description));
@@ -240,7 +252,11 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
 
   // which login providers this deployment offers (login.html renders buttons)
   if (request.method === 'GET' && path === '/api/auth/providers') {
-    return json({ providers: configuredProviders(env) });
+    return json({ providers: configuredProviders(env), password: Boolean(env.ADMIN_PASSWORD) });
+  }
+
+  if (request.method === 'POST' && path === '/api/login') {
+    return passwordLogin(request, env);
   }
 
   // OAuth: /api/auth/:provider/start → redirect; /callback → set session
@@ -814,8 +830,43 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// login / session — OAuth only (Google / GitHub); no password login
+// login / session — OAuth (Google / GitHub) and an optional shared password
 // ---------------------------------------------------------------------------
+
+/** Shared-password login for the admin allowlist. The password lives only in
+ *  the ADMIN_PASSWORD secret; it is never stored or written back. */
+async function passwordLogin(request: Request, env: Env): Promise<Response> {
+  if (!env.ADMIN_PASSWORD) return json({ error: 'password login is not configured' }, 404);
+  let body: { email?: string; password?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'bad json' }, 400);
+  }
+  const email = (body.email ?? '').trim().toLowerCase();
+  const password = body.password ?? '';
+  if (!email || !password) return json({ error: 'email and password required' }, 400);
+  if (!isAdminEmail(env, email)) return json({ error: 'not an admin' }, 403);
+  if (!(await secretsEqual(env.ADMIN_PASSWORD, password))) {
+    return json({ error: 'invalid credentials' }, 401);
+  }
+  const userId = await resolveUser(env, email, email);
+  return json({ ok: true, user: userId }, 200, await sessionCookie(env, userId));
+}
+
+/** Fixed-length digest compare so the check does not leak the secret's length. */
+async function secretsEqual(expected: string, given: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest('SHA-256', enc.encode(expected)),
+    crypto.subtle.digest('SHA-256', enc.encode(given)),
+  ]);
+  const aa = new Uint8Array(a);
+  const bb = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < aa.length; i++) diff |= aa[i] ^ bb[i];
+  return diff === 0;
+}
 
 // OAuth callback: verify + exchange, gate by the admin allowlist, issue a
 // session, then redirect back into the console (errors bounce to /login.html).
