@@ -24,6 +24,7 @@ import { verifySession } from './auth';
 import { bearerFrom, hashToken, looksLikeApiToken } from '../../../shared/tokens';
 import { hmacSign } from '../../../shared/ids';
 import { createOrGetSite, embedExisting } from './sites';
+import { listJourneys } from '../../../shared/journey';
 import { handleMcp } from './mcp';
 
 export interface Env {
@@ -126,6 +127,13 @@ async function route(request: Request, env: Env): Promise<Response> {
   const filters = parseFilters(q.get('filters'));
 
   if (resource === 'embed') return json(await embedExisting(env, siteId));
+  if (resource === 'journeys') {
+    const kind = q.get('kind');
+    const limit = parseInt(q.get('limit') ?? '20', 10);
+    return json({
+      journeys: await listJourneys(env.DB, siteId, kind === 'order' || kind === 'failed' ? kind : null, Number.isFinite(limit) ? limit : 20),
+    });
+  }
   if (resource === 'realtime') return json(await realtime(env.DB, siteId, Date.now()));
   if (resource === 'overview') return json(await overview(env.DB, siteId, period, filters));
   if (resource === 'timeseries') {

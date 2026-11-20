@@ -8,6 +8,7 @@
 
 import { parsePeriod, siteTimezone, overview, realtime, timeseries, breakdown, quality, alerts, adguardImpact, edge, traffic, vitals, anomalies, ApiError } from './queries';
 import { createOrGetSite, embedExisting, type SiteWriteEnv } from './sites';
+import { listJourneys } from '../../../shared/journey';
 
 export interface McpEnv extends SiteWriteEnv {
   DB: D1Database;
@@ -60,6 +61,19 @@ export const MCP_TOOLS = [
     name: 'get_embed',
     description: 'Return the tracking snippet for a site that already exists.',
     inputSchema: { type: 'object', properties: { ...siteArg }, required: ['site_id'] },
+  },
+  {
+    name: 'get_journeys',
+    description: 'Recent order and checkout-failure journeys: who it was, where they came from, the pages they viewed, and where they left. Use this to see which paths convert and which fail, then suggest a concrete change. kind=order or kind=failed to filter. Empty until the site sends pvuv("event","order") or pvuv("event","order_failed").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...siteArg,
+        kind: { type: 'string', enum: ['order', 'failed'], description: 'Omit for both' },
+        limit: { type: 'number', description: 'Default 20, max 50' },
+      },
+      required: ['site_id'],
+    },
   },
   {
     name: 'get_overview',
@@ -225,6 +239,12 @@ async function callTool(env: McpEnv, caller: Caller, name: string | undefined, a
   const periodName = str(args.period) || '7d';
 
   if (name === 'get_embed') return JSON.stringify(await embedExisting(env, siteId), null, 2);
+  if (name === 'get_journeys') {
+    const kind = str(args.kind);
+    return JSON.stringify({
+      journeys: await listJourneys(env.DB, siteId, kind === 'order' || kind === 'failed' ? kind : null, num(args.limit, 20)),
+    }, null, 2);
+  }
 
   const tz = await siteTimezone(env.DB, siteId);
   const period = parsePeriod(periodName, tz);

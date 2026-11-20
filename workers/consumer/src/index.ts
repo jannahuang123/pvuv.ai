@@ -26,6 +26,7 @@ import {
 } from '../../../shared/events';
 import { classifyChannel } from '../../../shared/channel';
 import { SESSION_MAX_SPAN_MS } from '../../../shared/ids';
+import { recordJourneys } from '../../../shared/journey';
 
 export interface Env {
   DB: D1Database;
@@ -95,6 +96,9 @@ export default {
         stmts.push(profileUpsert(env.DB, row));
       }
       await env.DB.batch(stmts);
+      // Notices are deduped by event id. A failure here must not retry the
+      // batch: session counters are additive and would double-count.
+      try { await recordJourneys(env.DB, rows); } catch (err) { console.error('journey', err); }
 
       batch.ackAll();
     } catch (err) {

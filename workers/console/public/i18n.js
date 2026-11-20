@@ -27,6 +27,11 @@
   var DICT = {
     zh: {
       'API tokens': 'API 令牌',
+      'Order alerts': '订单通知',
+      'notify-help': ' — 有人下单或下单失败时，把来源、看过的页面和离开页发到这里。填写 Slack 或飞书机器人的 Webhook。网站付款成功时调用 pvuv(\'identify\', 用户ID) 和 pvuv(\'event\', \'order\', { revenue: 29 })；失败时调用 pvuv(\'event\', \'order_failed\', { reason: \'原因\' })。',
+      'Webhook URL': '通知地址',
+      'Save webhook': '保存通知地址',
+      'No orders or failures yet.': '还没有下单或失败记录。',
       'token-help': ' — 只读凭证,供 CLI、MCP 服务器(让你自己的 Chatbot 查询数据)以及其他集成使用。仅在创建时显示一次。',
       'Token name': '令牌名称',
       'Scope': '适用范围',

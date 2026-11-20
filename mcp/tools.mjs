@@ -92,6 +92,19 @@ export const TOOLS = [
     inputSchema: { type: 'object', properties: { ...siteArg }, required: ['site_id'] },
   },
   {
+    name: 'get_journeys',
+    description: 'Recent order and checkout-failure journeys: source, page path, and exit. Use these to see which paths convert or fail and suggest a change. kind is order or failed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...siteArg,
+        kind: { type: 'string', enum: ['order', 'failed'] },
+        limit: { type: 'number', description: 'Default 20' },
+      },
+      required: ['site_id'],
+    },
+  },
+  {
     name: 'get_overview',
     description: 'Headline metrics for a period: pageviews, visitors, sessions, both bounce-rate definitions, engaged time, visit duration, and the split of pageviews across clean / suspect / bot / crawler verdicts.',
     inputSchema: { type: 'object', properties: { ...siteArg, ...periodArg }, required: ['site_id'] },
@@ -188,6 +201,8 @@ export async function callTool(name, a) {
       }));
     case 'get_embed':
       return fmt(await api(`/v1/sites/${sid(a)}/embed`));
+    case 'get_journeys':
+      return fmt(await api(`/v1/sites/${sid(a)}/journeys`, { kind: a.kind, limit: a.limit }));
     case 'get_overview':
       return fmt(await api(`/v1/sites/${sid(a)}/overview`, { period: P(a) }));
     case 'get_realtime':
