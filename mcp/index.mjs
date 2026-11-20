@@ -13,8 +13,9 @@
  *   {"mcpServers":{"pvuv":{"command":"node","args":["/path/to/pvuv.ai/mcp/index.mjs"],
  *     "env":{"PVUV_API_URL":"https://api.example.com","PVUV_TOKEN":"pvuv_…"}}}}
  *
- * The token is a read-only personal API token minted in the console. This
- * server performs GETs only — it can never mutate a deployment.
+ * The token is a personal API token minted in the console. Every tool reads
+ * data except create_site, which registers a domain or returns the site that
+ * already owns it. A hosted copy of the same tools is POST /mcp on the api worker.
  */
 
 import { createInterface } from 'node:readline';

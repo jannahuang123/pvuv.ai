@@ -501,6 +501,11 @@ curl -H "Authorization: Bearer $PVUV_TOKEN" "$PVUV_API_URL/v1/sites"
 node cli/pvuv.mjs overview <site_id> --period 7d
 ```
 
+也可以不装本地文件,直接把客户端指到 api worker 的 `POST /mcp`(带同一个
+`Authorization: Bearer pvuv_…`)。工具里的 `create_site` 会注册域名并返回要贴到
+网页里的统计代码;这个域名已经有站点时,它返回原来的站点和代码,不会再建一个。
+其余工具用来拉浏览量、来源、流量质量和 Web Vitals,方便根据数据改站。
+
 接入 Chatbot(以 Claude Desktop 为例,无需安装,服务器就是一个普通 Node 文件):
 
 ```json

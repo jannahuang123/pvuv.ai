@@ -23,12 +23,20 @@ import { parsePeriod, siteTimezone, overview, sitesSummary, realtime, timeseries
 import { verifySession } from './auth';
 import { bearerFrom, hashToken, looksLikeApiToken } from '../../../shared/tokens';
 import { hmacSign } from '../../../shared/ids';
+import { createOrGetSite, embedExisting } from './sites';
+import { handleMcp } from './mcp';
 
 export interface Env {
   DB: D1Database;
   /** Secrets via `wrangler secret put` — never in any file. */
   HMAC_KEY: string;
-  API_TOKEN: string;
+  API_TOKEN?: string;
+  /** Write-through cache so a site created via the API is visible to ingest immediately. */
+  SITE_CONFIG?: KVNamespace;
+  /** Console hostname (no scheme) that serves /f.js. */
+  SCRIPT_HOST?: string;
+  /** Ingest hostname (no scheme) the snippet posts to. */
+  INGEST_HOST?: string;
 }
 
 export default {
@@ -44,9 +52,22 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function route(request: Request, env: Env): Promise<Response> {
-  if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405);
-
   const url = new URL(request.url);
+
+  // MCP for chat clients. POST is JSON-RPC; GET lists the tool names.
+  if (url.pathname === '/mcp') return handleMcp(request, env, (req) => resolveCaller(req, env));
+
+  // The one write: register a site (or return the one that already owns the domain).
+  if (request.method === 'POST' && url.pathname === '/v1/sites') {
+    const caller = await resolveCaller(request, env);
+    if (!caller.ownerId) throw new ApiError(403, 'a personal API token is required to create a site');
+    if (caller.siteId) throw new ApiError(403, 'this token is limited to one existing site');
+    let body: { name?: string; domain?: string; domains?: string[]; timezone?: string; adguard_mode?: string; adclient?: string };
+    try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
+    return json(await createOrGetSite(env, caller.ownerId, body));
+  }
+
+  if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405);
 
   // cross-site ranking (§14) — not site-scoped; server-side token only. Placed
   // before the site-scoped matcher since it has no site id in the path.
@@ -62,7 +83,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   // this before it can query anything, since site ids aren't guessable.
   if (url.pathname === '/v1/sites') {
     const caller = await resolveCaller(request, env);
-    const where: string[] = ["status = 'active'"];
+    const where: string[] = ["status = 'active'", "name != '__pvuv_selftest'"];
     const binds: unknown[] = [];
     if (caller.ownerId) { where.push('owner_id = ?'); binds.push(caller.ownerId); }
     if (caller.siteId) { where.push('site_id = ?'); binds.push(caller.siteId); }
@@ -104,6 +125,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   const q = url.searchParams;
   const filters = parseFilters(q.get('filters'));
 
+  if (resource === 'embed') return json(await embedExisting(env, siteId));
   if (resource === 'realtime') return json(await realtime(env.DB, siteId, Date.now()));
   if (resource === 'overview') return json(await overview(env.DB, siteId, period, filters));
   if (resource === 'timeseries') {
