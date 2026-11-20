@@ -44,7 +44,66 @@ export class LlmError extends Error {
 async function errorText(res: Response): Promise<string> {
   let body = '';
   try { body = (await res.text()).slice(0, 500); } catch { /* ignore */ }
-  return body || res.statusText || `HTTP ${res.status}`;
+  return providerMessage(body) || body || res.statusText || `HTTP ${res.status}`;
+}
+
+function rawKey(apiKey: string): string {
+  return apiKey.replace(/^Bearer\s+/i, '').trim();
+}
+
+/** Kie rejects a raw x-api-key and reports that as HTTP 200 `{code, msg}`.
+ *  Official Anthropic keeps the raw key in x-api-key only. */
+function anthropicHeaders(base: string, apiKey: string): Record<string, string> {
+  const key = rawKey(apiKey);
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    'x-api-key': key,
+  };
+  let host = '';
+  try { host = new URL(base).hostname; } catch { host = ''; }
+  if (host === 'kie.ai' || host.endsWith('.kie.ai')) {
+    headers.authorization = `Bearer ${key}`;
+    headers['x-api-key'] = `Bearer ${key}`;
+  }
+  return headers;
+}
+
+/** Kie answers `{code, msg}` with HTTP 200. Pull that message out so the
+ *  console does not report a successful empty body. */
+function providerMessage(body: string): string {
+  try {
+    const data = JSON.parse(body) as { code?: number; msg?: string; error?: { message?: string } };
+    if (typeof data.msg === 'string' && data.msg && data.code !== undefined && data.code !== 200) return data.msg;
+    if (data.error?.message) return data.error.message;
+  } catch { /* not json */ }
+  return '';
+}
+
+function textFrom(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const row = data as {
+    content?: unknown;
+    choices?: Array<{ message?: { content?: unknown } }>;
+    data?: unknown;
+  };
+  if (typeof row.content === 'string') return row.content.trim();
+  if (Array.isArray(row.content)) {
+    const text = row.content.map((block) => {
+      if (typeof block === 'string') return block;
+      if (!block || typeof block !== 'object') return '';
+      const part = block as { type?: string; text?: string };
+      return part.type === 'thinking' ? '' : (part.text ?? '');
+    }).join('');
+    if (text.trim()) return text.trim();
+  }
+  const message = row.choices?.[0]?.message?.content;
+  if (typeof message === 'string') return message.trim();
+  if (Array.isArray(message)) {
+    return message.map((block) => (block && typeof block === 'object' && 'text' in block ? String((block as { text?: string }).text ?? '') : '')).join('').trim();
+  }
+  if (row.data && row.data !== data) return textFrom(row.data);
+  return '';
 }
 
 /**
@@ -57,11 +116,7 @@ export async function callLLM(cfg: AiConfig, system: string, user: string, maxTo
   if (cfg.provider === 'anthropic') {
     const res = await fetch(`${base}/v1/messages`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': cfg.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
+      headers: anthropicHeaders(base, cfg.apiKey),
       body: JSON.stringify({
         model: cfg.model,
         max_tokens: maxTokens,
@@ -69,9 +124,13 @@ export async function callLLM(cfg: AiConfig, system: string, user: string, maxTo
         messages: [{ role: 'user', content: user }],
       }),
     });
-    if (!res.ok) throw new LlmError(res.status, await errorText(res));
-    const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
-    const text = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('').trim();
+    const body = await res.text();
+    if (!res.ok) throw new LlmError(res.status, providerMessage(body) || body.slice(0, 500) || `HTTP ${res.status}`);
+    const failure = providerMessage(body);
+    if (failure) throw new LlmError(502, failure);
+    let data: unknown = null;
+    try { data = JSON.parse(body); } catch { throw new LlmError(502, 'model returned a non-JSON body'); }
+    const text = textFrom(data);
     if (!text) throw new LlmError(502, 'empty response from model');
     return text;
   }
@@ -81,7 +140,7 @@ export async function callLLM(cfg: AiConfig, system: string, user: string, maxTo
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${cfg.apiKey}`,
+      authorization: `Bearer ${rawKey(cfg.apiKey)}`,
     },
     body: JSON.stringify({
       model: cfg.model,
@@ -92,9 +151,13 @@ export async function callLLM(cfg: AiConfig, system: string, user: string, maxTo
       ],
     }),
   });
-  if (!res.ok) throw new LlmError(res.status, await errorText(res));
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const text = (data.choices?.[0]?.message?.content ?? '').trim();
+  const body = await res.text();
+  if (!res.ok) throw new LlmError(res.status, providerMessage(body) || body.slice(0, 500) || `HTTP ${res.status}`);
+  const failure = providerMessage(body);
+  if (failure) throw new LlmError(502, failure);
+  let data: unknown = null;
+  try { data = JSON.parse(body); } catch { throw new LlmError(502, 'model returned a non-JSON body'); }
+  const text = textFrom(data);
   if (!text) throw new LlmError(502, 'empty response from model');
   return text;
 }
