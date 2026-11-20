@@ -9,6 +9,7 @@
 #   wrangler secret put ADMIN_PASSWORD       -c workers/console/wrangler.toml  (optional shared password)
 #   wrangler secret put GOOGLE_CLIENT_SECRET -c workers/console/wrangler.toml  (Google login)
 #   wrangler secret put GITHUB_CLIENT_SECRET -c workers/console/wrangler.toml  (GitHub login)
+#   wrangler secret put STRINGER_MCP_URL     -c workers/console/wrangler.toml  (market advice; the URL is the credential)
 # Login is Google / GitHub OAuth, plus the optional ADMIN_PASSWORD secret.
 # Configure at least one of those or nobody can sign in.
 #
